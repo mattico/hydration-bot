@@ -1,13 +1,5 @@
-[package]
-authors = ["Matt Ickstadt <mattico8@gmail.com>"]
-name = "hydration-bot"
-version = "0.1.0"
-
-[dependencies]
-env_logger = "~0.4"
-kankyo = "~0.1"
-log = "~0.3"
-
-[dependencies.serenity]
-version = "0.5"
-features = ["cache", "framework", "standard_framework"]
+[workspace]
+members = [
+    "hydration-bot",
+    "serenity"
+]
