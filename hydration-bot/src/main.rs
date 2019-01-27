@@ -17,35 +17,75 @@ extern crate serenity;
 extern crate env_logger;
 extern crate kankyo;
 
-mod commands;
-
+use serenity::client::bridge::gateway::ShardManager;
+use serenity::framework::standard::ArgError;
 use serenity::framework::StandardFramework;
 use serenity::http;
-use serenity::model::id::{ChannelId, UserId, GuildId};
+use serenity::model::channel::Message;
 use serenity::model::event::ResumedEvent;
 use serenity::model::gateway::Ready;
-use serenity::model::user::User;
+use serenity::model::id::{GuildId, UserId};
 use serenity::model::voice::VoiceState;
 use serenity::prelude::*;
 use std::collections::HashSet;
 use std::env;
-use std::sync::Mutex;
+use std::sync::Arc;
+use typemap::Key;
 
 const PERMISSIONS: u64 = 138240;
 
-struct Handler {
-    drated_users: Mutex<HashSet<UserId>>,
-    talking_users: Mutex<HashSet<UserId>>,
+fn reply(msg: &Message, data: &str) {
+    let _ = msg
+        .reply(data)
+        .map_err(|e| error!("Unable to send reply message: {}", e));
 }
 
-impl Handler {
-    fn new() -> Self {
-        Handler {
-            drated_users: Mutex::new(HashSet::new()),
-            talking_users: Mutex::new(HashSet::new()),
-        }
+command!(drate(ctx, msg, args) {
+    fn drate_on(msg: &Message, drated: &mut HashSet<UserId>) {
+        drated.insert(msg.author.id);
+        reply(msg, "Enabled drate reminders");
     }
+
+    fn drate_off(msg: &Message, drated: &mut HashSet<UserId>) {
+        drated.remove(&msg.author.id);
+        reply(msg, "Disabled drate reminders");
+    }
+
+    let mut data = ctx.data.lock();
+    let mut drated = data.get_mut::<DratedUsers>().unwrap();
+
+    match args.single::<String>() {
+        Err(ArgError::Eos) => drate_on(msg, &mut drated),
+        Ok(ref arg) if arg == "on" => drate_on(msg, &mut drated),
+        Ok(ref arg) if arg == "off" => drate_off(msg, &mut drated),
+        _ => reply(msg, "Unknown argument. Usage: `!drate [on|off]`"),
+    };
+});
+
+command!(quit(ctx, msg, _args) {
+    reply(msg, "Shutting down!");
+    let mut data = ctx.data.lock();
+    let shard_manager = data.get_mut::<ShardManagerContainer>().unwrap().clone();
+    let mut shard_manager = shard_manager.lock();
+    shard_manager.shutdown_all();
+});
+
+struct ShardManagerContainer;
+impl Key for ShardManagerContainer {
+    type Value = Arc<Mutex<ShardManager>>;
 }
+
+struct DratedUsers;
+impl Key for DratedUsers {
+    type Value = HashSet<UserId>;
+}
+
+struct TalkingUsers;
+impl Key for TalkingUsers {
+    type Value = HashSet<UserId>;
+}
+
+struct Handler;
 
 impl EventHandler for Handler {
     fn ready(&self, _: Context, ready: Ready) {
@@ -56,12 +96,15 @@ impl EventHandler for Handler {
         info!("Resumed");
     }
 
-    fn voice_state_update(&self, _ctx: Context, _: Option<GuildId>, voice: VoiceState) {
+    fn voice_state_update(&self, ctx: Context, _: Option<GuildId>, voice: VoiceState) {
         info!("{:?}", voice);
+
+        let mut data = ctx.data.lock();
+        let talking = data.get_mut::<TalkingUsers>().unwrap();
         if voice.channel_id.is_some() {
-            self.talking_users.lock().unwrap().insert(voice.user_id);
+            talking.insert(voice.user_id);
         } else {
-            self.talking_users.lock().unwrap().remove(&voice.user_id);
+            talking.remove(&voice.user_id);
         }
     }
 }
@@ -86,8 +129,14 @@ fn main() {
         println!("https://discordapp.com/api/oauth2/authorize?client_id={}&permissions={}&scope=bot\n\n\n", id, PERMISSIONS);
     };
 
-    let handler = Handler::new();
-    let mut client = Client::new(&token, handler).expect("Err creating client");
+    let mut client = Client::new(&token, Handler).expect("Err creating client");
+
+    {
+        let mut data = client.data.lock();
+        data.insert::<DratedUsers>(HashSet::new());
+        data.insert::<TalkingUsers>(HashSet::new());
+        data.insert::<ShardManagerContainer>(client.shard_manager.clone());
+    }
 
     let owners = match http::get_current_application_info() {
         Ok(info) => {
@@ -101,11 +150,12 @@ fn main() {
 
     client.with_framework(
         StandardFramework::new()
-            .configure(|c| c.owners(owners).prefix("~"))
-            .command("quit", |c| c.cmd(commands::owner::quit).owners_only(true)),
+            .configure(|c| c.owners(owners).prefix("!"))
+            .command("drate", |c| c.cmd(drate))
+            .command("quit", |c| c.cmd(quit).owners_only(true)),
     );
 
-    if let Err(why) = client.start() {
+    if let Err(why) = client.start_autosharded() {
         error!("Client error: {:?}", why);
     }
 }

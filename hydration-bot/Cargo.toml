@@ -2,11 +2,13 @@
 authors = ["Matt Ickstadt <mattico8@gmail.com>"]
 name = "hydration-bot"
 version = "0.1.0"
+edition = "2018"
 
 [dependencies]
 env_logger = "0.6"
 kankyo = "0.2"
 log = "0.4"
+typemap = "*" # get the version from serenity
 
 [dependencies.serenity]
 path = "../serenity"
