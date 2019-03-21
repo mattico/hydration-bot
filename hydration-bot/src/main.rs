@@ -15,7 +15,6 @@ extern crate log;
 extern crate serenity;
 
 extern crate env_logger;
-extern crate kankyo;
 
 use serenity::client::bridge::gateway::ShardManager;
 use serenity::framework::standard::ArgError;
@@ -121,10 +120,6 @@ impl EventHandler for Handler {
 
 fn main() {
     use serenity::client::validate_token;
-
-    // This will load the environment variables located at `./.env`, relative to
-    // the CWD. See `./.env.example` for an example on how to structure this.
-    kankyo::load().expect("Failed to load .env file");
 
     // Initialize the logger to use environment variables.
     //
