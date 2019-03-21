@@ -29,11 +29,16 @@ use serenity::model::voice::VoiceState;
 use serenity::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::env;
+use std::error::Error;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::thread;
 use std::time::{Duration, Instant};
 use typemap::Key;
 
-const PERMISSIONS: u64 = 138240;
+const PERMISSIONS: u64 = 50469888;
+
+static RUN: AtomicBool = AtomicBool::new(true);
 
 fn reply(msg: &Message, data: &str) {
     let _ = msg
@@ -42,12 +47,12 @@ fn reply(msg: &Message, data: &str) {
 }
 
 command!(drate(ctx, msg, args) {
-    fn drate_on(msg: &Message, drated: &mut HashSet<UserId>) {
-        drated.insert(msg.author.id);
+    fn drate_on(msg: &Message, drated: &mut HashMap<UserId, Instant>) {
+        drated.insert(msg.author.id, Instant::now());
         reply(msg, "Enabled drate reminders");
     }
 
-    fn drate_off(msg: &Message, drated: &mut HashSet<UserId>) {
+    fn drate_off(msg: &Message, drated: &mut HashMap<UserId, Instant>) {
         drated.remove(&msg.author.id);
         reply(msg, "Disabled drate reminders");
     }
@@ -65,6 +70,7 @@ command!(drate(ctx, msg, args) {
 
 command!(quit(ctx, msg, _args) {
     reply(msg, "Shutting down!");
+    RUN.store(false, Ordering::Relaxed);
     let mut data = ctx.data.lock();
     let shard_manager = data.get_mut::<ShardManagerContainer>().unwrap().clone();
     let mut shard_manager = shard_manager.lock();
@@ -80,7 +86,7 @@ impl Key for ShardManagerContainer {
 struct DratedUsers;
 
 impl Key for DratedUsers {
-    type Value = HashSet<UserId>;
+    type Value = HashMap<UserId, Instant>;
 }
 
 struct TalkingUsers;
@@ -137,7 +143,7 @@ fn main() {
 
     {
         let mut data = client.data.lock();
-        data.insert::<DratedUsers>(HashSet::new());
+        data.insert::<DratedUsers>(HashMap::new());
         data.insert::<TalkingUsers>(HashSet::new());
         data.insert::<ShardManagerContainer>(client.shard_manager.clone());
     }
@@ -159,7 +165,44 @@ fn main() {
             .command("quit", |c| c.cmd(quit).owners_only(true)),
     );
 
-    if let Err(why) = client.start_autosharded() {
-        error!("Client error: {:?}", why);
+    let data = client.data.clone();
+
+    let remind_thread = thread::spawn(move || {
+        info!("Drate remind thread running");
+        while RUN.load(Ordering::Relaxed) {
+            {
+                let mut data = data.lock();
+                let mut drated_users = data.get_mut::<DratedUsers>().unwrap();
+                if let Err(err) = remind(&mut drated_users) {
+                    error!("Drate remind error: {:?}", err);
+                }
+            }
+            thread::sleep(Duration::from_secs(1));
+        }
+        info!("Drate remind thread shutting down");
+    });
+
+    if let Err(err) = client.start_autosharded() {
+        error!("Client error: {:?}", err);
     }
+
+    if let Err(err) = remind_thread.join() {
+        error!("Drate remind thread error: {:?}", err);
+    }
+}
+
+fn remind(drated_users: &mut HashMap<UserId, Instant>) -> Result<(), Box<dyn Error>> {
+    let now = Instant::now();
+    let drate_duration = Duration::from_secs(60 * 30);
+
+    for (user, time) in drated_users.iter_mut() {
+        if now.duration_since(*time) >= drate_duration {
+            info!("Reminding user {:?} to stay drated", *user);
+            *time = now;
+            let private_channel = user.create_dm_channel()?;
+            private_channel.send_message(|m| m.content("Drink Water").tts(true))?;
+        }
+    }
+
+    Ok(())
 }
