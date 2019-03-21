@@ -27,9 +27,10 @@ use serenity::model::gateway::Ready;
 use serenity::model::id::{GuildId, UserId};
 use serenity::model::voice::VoiceState;
 use serenity::prelude::*;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use typemap::Key;
 
 const PERMISSIONS: u64 = 138240;
@@ -71,16 +72,19 @@ command!(quit(ctx, msg, _args) {
 });
 
 struct ShardManagerContainer;
+
 impl Key for ShardManagerContainer {
     type Value = Arc<Mutex<ShardManager>>;
 }
 
 struct DratedUsers;
+
 impl Key for DratedUsers {
     type Value = HashSet<UserId>;
 }
 
 struct TalkingUsers;
+
 impl Key for TalkingUsers {
     type Value = HashSet<UserId>;
 }
