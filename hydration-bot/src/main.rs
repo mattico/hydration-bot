@@ -9,13 +9,13 @@
 //! features = ["framework", "standard_framework"]
 //! ```
 
-#[macro_use]
-extern crate log;
-#[macro_use]
-extern crate serenity;
+use log::*;
 
-extern crate env_logger;
 
+use env_logger;
+
+use serenity;
+use serenity::command;
 use serenity::client::bridge::gateway::ShardManager;
 use serenity::framework::standard::ArgError;
 use serenity::framework::StandardFramework;
@@ -167,8 +167,7 @@ fn main() {
         while RUN.load(Ordering::Relaxed) {
             {
                 let mut data = data.lock();
-                let mut drated_users = data.get_mut::<DratedUsers>().unwrap();
-                if let Err(err) = remind(&mut drated_users) {
+                if let Err(err) = remind(&mut *data) {
                     error!("Drate remind error: {:?}", err);
                 }
             }
@@ -186,17 +185,26 @@ fn main() {
     }
 }
 
-fn remind(drated_users: &mut HashMap<UserId, Instant>) -> Result<(), Box<dyn Error>> {
+fn remind(data: &mut typemap::ShareMap) -> Result<(), Box<dyn Error>> {
     let now = Instant::now();
     let drate_duration = Duration::from_secs(60 * 30);
+    let drated_users = data.get::<DratedUsers>().unwrap();
+    let talking_users = data.get::<TalkingUsers>().unwrap();
+    let mut reminded = Vec::new();
 
-    for (user, time) in drated_users.iter_mut() {
-        if now.duration_since(*time) >= drate_duration {
-            info!("Reminding user {:?} to stay drated", *user);
-            *time = now;
-            let private_channel = user.create_dm_channel()?;
+    for (&id, &time) in drated_users {
+        if now.duration_since(time) >= drate_duration && talking_users.contains(&id) {
+            let user = id.to_user()?;
+            info!("Reminding user {}#{} to stay drated", user.name, user.discriminator);
+            let private_channel = id.create_dm_channel()?;
             private_channel.send_message(|m| m.content("Drink Water").tts(true))?;
+            reminded.push(id);
         }
+    }
+
+    let drated_users = data.get_mut::<DratedUsers>().unwrap();
+    for user in reminded.into_iter() {
+        drated_users.insert(user, now);
     }
 
     Ok(())
